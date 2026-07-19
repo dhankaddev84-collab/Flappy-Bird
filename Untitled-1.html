@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Flappy Bird — Fixed</title>
+<style>
+  :root {
+    --bg1: #4facfe;
+    --bg2: #00f2fe;
+    --panel: #ffffffcc;
+  }
+  body {
+    margin: 0;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, var(--bg1), var(--bg2));
+    font-family: "Poppins", Arial, sans-serif;
+  }
+
+  .wrapper {
+    text-align: center;
+  }
+
+  .title {
+    color: white;
+    font-size: 36px;
+    margin: 0 0 12px 0;
+    text-shadow: 0 3px 8px rgba(0,0,0,0.4);
+    letter-spacing: 2px;
+  }
+
+  .panel {
+    background: var(--panel);
+    padding: 18px;
+    border-radius: 14px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+    display: inline-block;
+  }
+
+  canvas {
+    display: block;
+    background: #7DDDD0;
+    border-radius: 12px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.2);
+  }
+
+  .controls {
+    margin-top: 12px;
+    display:flex;
+    gap:10px;
+    justify-content:center;
+    align-items:center;
+  }
+
+  button {
+    background: #ffd54a;
+    border: none;
+    padding: 10px 18px;
+    border-radius: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 4px 0 #caa400;
+  }
+  button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    box-shadow: none;
+    transform: none;
+  }
+
+  .info {
+    font-size: 14px;
+    color: #333;
+    margin-left: 8px;
+  }
+
+  @media (max-width:480px){
+    .title { font-size: 24px; }
+  }
+</style>
+</head>
+<body>
+  <div class="wrapper">
+    <h1 class="title">Flappy Bird</h1>
+
+    <div class="panel">
+      <canvas id="gameCanvas" width="360" height="600"></canvas>
+
+      <div class="controls">
+        <button id="startBtn" disabled>Loading...</button>
+        <button id="restartBtn" style="display:none">Restart</button>
+        <div class="info" id="infoText">Tap/click or press Space to flap</div>
+      </div>
+    </div>
+  </div>
+
+<script>
+/* ====== Robust Flappy Bird single-file ======
+   - Preloads bird image and enables start after load
+   - Draw order: background -> pipes -> bird -> HUD
+   - Fallback: yellow rect if image fails
+   - Touch + mouse + keyboard controls
+   - Restart button appears after game over
+*/
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const startBtn = document.getElementById('startBtn');
+const restartBtn = document.getElementById('restartBtn');
+const infoText = document.getElementById('infoText');
+
+let W = canvas.width;
+let H = canvas.height;
+
+// --- Preload bird image ---
+const birdImg = new Image();
+birdImg.src = 'bird.png'; // make sure bird.png is present in same folder
+
+let imgLoaded = false;
+let imgError = false;
+
+birdImg.onload = () => {
+  imgLoaded = true;
+  startBtn.disabled = false;
+  startBtn.textContent = 'Start Game';
+};
+
+birdImg.onerror = () => {
+  imgError = true;
+  // allow start even if image missing (fallback rectangle will be used)
+  imgLoaded = false;
+  startBtn.disabled = false;
+  startBtn.textContent = 'Start Game (no image)';
+};
+
+// --- Game objects ---
+const bird = {
+  x: 60,
+  y: H/2 - 20,
+  w: 40,
+  h: 30,
+  vel: 0,
+  gravity: 0.5,
+  lift: -9
+};
+
+let pipes = [];
+const pipeWidth = 56;
+const pipeGap = 150;
+let frames = 0;
+let score = 0;
+let running = false;
+let gameOver = false;
+
+// --- Helpers ---
+function resetGame() {
+  bird.y = H/2 - 20;
+  bird.vel = 0;
+  pipes = [];
+  frames = 0;
+  score = 0;
+  running = false;
+  gameOver = false;
+  restartBtn.style.display = 'none';
+  startBtn.style.display = 'inline-block';
+  startBtn.disabled = !imgLoaded && !imgError; // ensure image load or fallback
+  startBtn.textContent = imgLoaded ? 'Start Game' : 'Start Game';
+  infoText.textContent = 'Tap/click or press Space to flap';
+  draw(); // show initial frame
+}
+
+// --- Create pipe ---
+function addPipe() {
+  const top = Math.floor(Math.random() * (H - pipeGap - 120)) + 40;
+  pipes.push({ x: W, top: top, bottom: top + pipeGap, passed: false });
+}
+
+// --- Draw functions ---
+function drawBackground() {
+  // subtle ground/top lines
+  ctx.fillStyle = '#7DDDD0';
+  ctx.fillRect(0,0,W,H);
+  ctx.fillStyle = 'rgba(0,0,0,0.05)';
+  ctx.fillRect(0,0,W,6);
+}
+
+function drawPipes() {
+  ctx.fillStyle = '#178b2b';
+  pipes.forEach(p => {
+    ctx.fillRect(p.x, 0, pipeWidth, p.top);
+    ctx.fillRect(p.x, p.bottom, pipeWidth, H - p.bottom);
+    // pipe rim shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.12)';
+    ctx.fillRect(p.x+pipeWidth-6, 0, 6, p.top);
+    ctx.fillRect(p.x+pipeWidth-6, p.bottom, 6, H - p.bottom);
+    ctx.fillStyle = '#178b2b';
+  });
+}
+
+function drawBird() {
+  if (!imgError && birdImg.complete && imgLoaded) {
+    ctx.drawImage(birdImg, bird.x, bird.y, bird.w, bird.h);
+  } else {
+    // fallback yellow square (visible)
+    ctx.fillStyle = '#FFD700';
+    ctx.fillRect(bird.x, bird.y, bird.w, bird.h);
+    // little eye
+    ctx.fillStyle = 'black';
+    ctx.fillRect(bird.x + bird.w - 10, bird.y + 7, 4, 4);
+  }
+}
+
+function drawHUD() {
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.font = '20px Poppins, Arial';
+  ctx.fillText('Score: ' + score, 12, 28);
+}
+
+// --- Update physics & logic ---
+function update() {
+  if (!running) return;
+
+  frames++;
+
+  // Bird physics
+  bird.vel += bird.gravity;
+  bird.y += bird.vel;
+
+  // Clamp bird inside canvas
+  if (bird.y + bird.h > H) {
+    bird.y = H - bird.h;
+    bird.vel = 0;
+    // if hits ground -> game over
+    endGame();
+  }
+  if (bird.y < 0) {
+    bird.y = 0;
+    bird.vel = 0;
+  }
+
+  // Pipes generation
+  if (frames % 90 === 0) addPipe();
+
+  // Move pipes & score
+  pipes.forEach(p => {
+    p.x -= 2.4;
+    // score
+    if (!p.passed && p.x + pipeWidth < bird.x) {
+      score++;
+      p.passed = true;
+    }
+  });
+
+  // remove offscreen
+  pipes = pipes.filter(p => p.x + pipeWidth > -10);
+
+  // collision check
+  for (let p of pipes) {
+    if (
+      bird.x < p.x + pipeWidth &&
+      bird.x + bird.w > p.x &&
+      (bird.y < p.top || bird.y + bird.h > p.bottom)
+    ) {
+      endGame();
+      break;
+    }
+  }
+}
+
+function endGame() {
+  if (!gameOver) {
+    gameOver = true;
+    running = false;
+    restartBtn.style.display = 'inline-block';
+    startBtn.style.display = 'none';
+    infoText.textContent = 'Game Over — Your score ' + score;
+  }
+}
+
+// --- Main draw loop ---
+function draw() {
+  // always clear
+  ctx.clearRect(0,0,W,H);
+
+  drawBackground();
+  drawPipes();
+  drawBird();
+  drawHUD();
+
+  if (!running && !gameOver) {
+    // show hint overlay
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fillRect(0, H - 70, W, 70);
+    ctx.fillStyle = '#fff';
+    ctx.font = '16px Poppins, Arial';
+    ctx.fillText('Press Start, then Space/click to flap', 12, H - 36);
+  }
+
+  requestAnimationFrame(draw);
+}
+
+// --- Input handlers ---
+function flap() {
+  if (!gameOver) {
+    bird.vel = bird.lift;
+  }
+}
+
+canvas.addEventListener('click', () => {
+  if (running) flap();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space') {
+    e.preventDefault();
+    if (!running && !gameOver && startBtn.style.display === 'none') {
+      // if game hasn't started but start pressed, allow
+      running = true;
+    }
+    flap();
+  }
+});
+
+// mobile touch
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  if (running) flap();
+}, {passive:false});
+
+// Start & Restart
+startBtn.addEventListener('click', () => {
+  running = true;
+  gameOver = false;
+  startBtn.style.display = 'none';
+  restartBtn.style.display = 'none';
+});
+
+restartBtn.addEventListener('click', () => {
+  resetGame();
+});
+
+// Kick off drawing
+resetGame();
+draw();
+
+// Game update ticker (separated from draw for stable physics)
+setInterval(() => {
+  if (running) update();
+}, 1000/60);
+
+</script>
+</body>
+</html>       
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
